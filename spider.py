@@ -85,11 +85,10 @@ if __name__ == '__main__':
             with open('info/waiting_list', 'w', encoding='utf-8') as f:
                 for i in waiting_list:
                     f.write(i+'\n')
+        pool = Pool()
+        pool.map(requests_download, [x for x in waiting_list])
     except:
         pass
-
-    pool = Pool()
-    pool.map(requests_download, [x for x in waiting_list])
 
 
 

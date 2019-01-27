@@ -15,7 +15,6 @@ from w3lib.url import canonicalize_url
 from scrapy.utils.python import to_bytes
 from requests.exceptions import ReadTimeout
 from requests.adapters import HTTPAdapter
-from tools.utis import typeassert, timer
 
 timeout = 2
 max_retries = 3
@@ -290,7 +289,7 @@ def save_response_to_file(response):
     down_load_file(response, path, True)
 
 
-@typeassert(url_list=list)
+#@typeassert(url_list=list)
 def url_judge(url_list):
     # 又设计缺陷未使用到
     """将解析好的链接列表分类,并返回字典"""
@@ -334,7 +333,7 @@ def down_file(srcUrl, localFile):
         print(line)
 
 
-@typeassert(urls=list)
+#@typeassert(urls=list)
 def requests_download_old(urls, dir_path="./", duplicate=False, proxy=False):
     """使用requests下载"""
     fail_urls = set()
