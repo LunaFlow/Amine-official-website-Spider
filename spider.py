@@ -77,12 +77,12 @@ if __name__ == '__main__':
     main()
     logging.warning('失败请求了:' + str(len(retry_html_list)))
     if len(retry_html_list) > 0:
-        with open('fail_url', 'w') as f:
+        with open('info/fail_url', 'w') as f:
             for i in retry_html_list:
                 f.write(i+'\n')
     try:
         if len(waiting_list) > 0:
-            with open('waiting_list', 'w', encoding='utf-8') as f:
+            with open('info/waiting_list', 'w', encoding='utf-8') as f:
                 for i in waiting_list:
                     f.write(i+'\n')
     except:
