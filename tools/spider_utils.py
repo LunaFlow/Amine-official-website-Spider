@@ -5,6 +5,10 @@ import json
 import hashlib
 import logging
 import requests
+import subprocess
+import xmlrpc.client
+import win32com.client
+from tools import com_config
 import socket
 from pathlib import Path
 import urllib3
@@ -16,8 +20,20 @@ from scrapy.utils.python import to_bytes
 from requests.exceptions import ReadTimeout
 from requests.adapters import HTTPAdapter
 
-timeout = 2
+timeout = 10
 max_retries = 3
+
+
+def mkdir_path(url):
+    dirs_path = url.split("/")[2:-1]
+    dir_path = ""
+    for k in range(len(dirs_path)):
+        dir_path = os.path.join(os.getcwd(), "/".join(dirs_path[0:k + 1]))
+        if not Path(dir_path).exists():
+            os.mkdir(dir_path)
+    if dir_path == "" and dir_path:
+        dir_path = "./"
+    return dir_path
 
 
 # @typeassert(response=requests.models.Response)
@@ -49,13 +65,18 @@ def extract_html_by_re(response):
 def extract_css_js_by_re(response, home_page):
     """从爬取的css,js提取图片（正则解析）"""
     url_list = []
-    if response.url.endswith('.js'):
+    if re.match('https?://.*?\.js', response.url):
         img_pattern = re.compile('[\'\"]([^\"\']*?\.(jpg|jpeg|png|gif|svg|ico))[\'\"]')
         url_list.extend([x[0].strip() for x in re.findall(img_pattern, response.text)])
         url_list = [urljoin(home_page, u)for u in url_list]
-    elif response.url.endswith('.css'):
+    elif re.match('https?://.*?\.css', response.url):
         img_pattern = re.compile('url\(([^\"\'\s]*?\.(jpg|jpeg|png|gif|svg|ico))\)')
+        '''
+        content: url("../../images/zh/header/btn_product_on.png");
+        '''
+        img_pattern2 = re.compile('url\(([\'\"][^\"\'\s]*?\.(jpg|jpeg|png|gif|svg|ico))[\'\"]\)')
         url_list.extend([x[0].strip() for x in re.findall(img_pattern, response.text)])
+        url_list.extend([x[0].strip() for x in re.findall(img_pattern2, response.text)])
         url_list = [urljoin(response.url, u)for u in url_list]
     for u in url_list:
         yield u
@@ -93,18 +114,10 @@ def extract_url_by_bs4(response):
 
 def save_html(response):
     """获取响应并存为html"""
-    def mkdir_path(url):
-        dirs_path = url.split("/")[2:-1]
-        dir_path = ""
-        for k in range(len(dirs_path)):
-            dir_path = os.path.join(os.getcwd(), "/".join(dirs_path[0:k + 1]))
-            if not Path(dir_path).exists():
-                os.mkdir(dir_path)
-        if dir_path == "" and dir_path:
-            dir_path = "./"
-        return dir_path
+
     path = mkdir_path(response.url)
-    if response.url.endswith(".html"):
+    # 很老旧的网站有 htm 文件
+    if response.url.endswith(".html") or response.url.endswith(".htm"):
         html_file = os.path.join(path, response.url.split("/")[-1])
     else:
         html_file = os.path.join(path, "index.html")
@@ -179,17 +192,6 @@ def requests_download(url, dir_path="./", proxy=False):
         "User-Agent": UserAgent().google
     }
 
-    def mkdir_path(url):
-        dirs_path = url.split("/")[2:-1]
-        dir_path = ""
-        for k in range(len(dirs_path)):
-            dir_path = os.path.join(os.getcwd(), "/".join(dirs_path[0:k + 1]))
-            if not Path(dir_path).exists():
-                os.mkdir(dir_path)
-        if dir_path == "" and dir_path:
-            dir_path = "./"
-        return dir_path
-
     # 下载一个大文件
     def DownOneFile(srcUrl, localFile):
         print('%s\n --->>>\n  %s' % (srcUrl, localFile))
@@ -258,16 +260,6 @@ def requests_download(url, dir_path="./", proxy=False):
 # @typeassert(response=requests.models.Response)
 def save_response_to_file(response):
     """其实是上一个的重载，把响应的内容直接存成文件"""
-    def mkdir_path(url):
-        dirs_path = url.split("/")[3:-1]
-        dir_path = ""
-        for k in range(len(dirs_path)):
-            dir_path = os.path.join(os.getcwd(), "/".join(dirs_path[0:k + 1]))
-            if not Path(dir_path).exists():
-                os.mkdir(dir_path)
-        if dir_path == "" and dir_path:
-            dir_path = "./"
-        return dir_path
 
     def down_load_file(response, file_dir_path, duplicate):
         content = response.content
@@ -288,6 +280,51 @@ def save_response_to_file(response):
     path = mkdir_path(response.url)
     down_load_file(response, path, True)
 
+
+def aria2_download(aria2_file_urls, path):
+    aria2_file_base_path = path
+
+    def check_process_exist_by_process_name(process_name):
+        """查看win是否存在某个进程"""
+        global process_code_cov
+        try:
+            wmi = win32com.client.GetObject('winmgmts:')
+            process_code_cov = wmi.ExecQuery('select * from Win32_Process where Name="%s"' % process_name)
+        except Exception as e:
+            print(process_name, "error : ", e)
+        if len(process_code_cov) > 0:
+            print(process_name + " exist");
+            return True
+        else:
+            print(process_name + " is not exist")
+            return False
+    """使用aria2进行下载图片音频等二进制大文件"""
+    # 切换到启动aria2脚本所在的目录
+    os.chdir(com_config.aria2_dir_path)
+
+    # aria2服务器只启动一次，通过查看进程决定是否再启动
+    if not check_process_exist_by_process_name("aria2c.exe"):
+        subprocess.Popen(com_config.aria2_start_script)
+    # 连接服务器
+    sever = xmlrpc.client.ServerProxy('http://localhost:6800/rpc')
+    '''
+    需要下载的文件列表 aria2_file_list = ['https://cdn.pixabay.com/photo/2018/11/29/21/19/hamburg-3846525_960_720.jpg']
+    下载到本地的文件名 aria2_file_name = "demo.png"
+    下载到本地的路径   aria2_file_path = "C:\\Users\\Anchan\\Desktop"
+    '''
+    # 切换回目录
+    os.chdir(aria2_file_base_path)
+
+    # 执行下载
+    for aria2_url in aria2_file_urls:
+        if aria2_url.find("?"):
+            download_url = re.sub('\?.+', '', aria2_url)
+            aria2_file_name = download_url.split('/')[-1]
+        else:
+            aria2_file_name = aria2_url.split('/')[-1]
+        aria2_file_path = os.path.join(aria2_file_base_path, mkdir_path(aria2_url))
+        options = {"out": aria2_file_name, "dir": aria2_file_path}
+        sever.aria2.addUri("token:my_token", [aria2_url], options)
 
 #@typeassert(url_list=list)
 def url_judge(url_list):
@@ -346,17 +383,6 @@ def requests_download_old(urls, dir_path="./", duplicate=False, proxy=False):
     headers = {
         "User-Agent": UserAgent().google
     }
-
-    def mkdir_path(url):
-        dirs_path = url.split("/")[3:-1]
-        dir_path = ""
-        for k in range(len(dirs_path)):
-            dir_path = os.path.join(os.getcwd(), "/".join(dirs_path[0:k + 1]))
-            if not Path(dir_path).exists():
-                os.mkdir(dir_path)
-        if dir_path == "" and dir_path:
-            dir_path = "./"
-        return dir_path
 
     def down_load_pic(download_url, file_dir_path, duplicate):
         """以两种方式存放文件，1.给文件名加时间戳 2.按路径建立文件夹存放"""
